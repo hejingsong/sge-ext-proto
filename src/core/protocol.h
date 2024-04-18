@@ -12,13 +12,13 @@
 #ifdef __GNUC__
 #define DLL_PUBLIC __attribute__((dllexport))
 #else
-#define DLL_PUBLIC __declspec(dllexport) // Note: actually gcc seems to also supports this syntax.
+#define DLL_PUBLIC __declspec(dllexport)  // Note: actually gcc seems to also supports this syntax.
 #endif
 #else
 #ifdef __GNUC__
 #define DLL_PUBLIC __attribute__((dllimport))
 #else
-#define DLL_PUBLIC __declspec(dllimport) // Note: actually gcc seems to also supports this syntax.
+#define DLL_PUBLIC __declspec(dllimport)  // Note: actually gcc seems to also supports this syntax.
 #endif
 #endif
 #define DLL_LOCAL
@@ -34,8 +34,7 @@
 
 DLL_PUBLIC struct sge_proto;
 
-DLL_PUBLIC enum
-{
+DLL_PUBLIC enum {
     SGE_ERR_FILE_NOT_FOUND = 1,
     SGE_ERR_MEMORY_NOT_ENOUGH,
     SGE_ERR_PARSER_ERROR,
@@ -45,8 +44,7 @@ DLL_PUBLIC enum
     SGE_ERR_ARG_ERROR
 };
 
-DLL_PUBLIC enum sge_field_type
-{
+DLL_PUBLIC enum sge_field_type {
     FIELD_TYPE_INTEGER = 1 << 0,
     FIELD_TYPE_STRING = 1 << 1,
     FIELD_TYPE_CUSTOM = 1 << 2,
@@ -54,26 +52,22 @@ DLL_PUBLIC enum sge_field_type
     FIELD_TYPE_UNKNOWN = 1 << 7
 };
 
-DLL_PUBLIC struct sge_value
-{
-    enum sge_field_type t; // field type
+DLL_PUBLIC struct sge_value {
+    enum sge_field_type t;  // field type
     union {
         long long i;
-        struct
-        {
+        struct {
             const char *s;
             size_t l;
         } s;
-        void *a; // any
+        void *a;  // any
     } v;
 };
 
-DLL_PUBLIC struct sge_key
-{
+DLL_PUBLIC struct sge_key {
     unsigned char t;
     size_t idx;
-    struct
-    {
+    struct {
         const char *s;
         size_t l;
     } name;
@@ -86,9 +80,10 @@ DLL_PUBLIC struct sge_proto *sge_parse(const char *content, size_t len);
 DLL_PUBLIC struct sge_proto *sge_parse_file(const char *filename);
 DLL_PUBLIC void sge_free_protocol(struct sge_proto *proto);
 
-DLL_PUBLIC int sge_encode(struct sge_proto *proto, const char *name, const void *ud, sge_fn_get fn_get,
-                          uint8_t *buffer);
-DLL_PUBLIC int sge_decode(struct sge_proto *proto, uint8_t *bin, size_t len, void *ud, sge_fn_set fn_set);
+DLL_PUBLIC int sge_encode(struct sge_proto *proto, const char *name, const void *ud,
+                          sge_fn_get fn_get, uint8_t *buffer);
+DLL_PUBLIC int sge_decode(struct sge_proto *proto, uint8_t *bin, size_t len, void *ud,
+                          sge_fn_set fn_set);
 
 // debug
 DLL_PUBLIC int sge_protocol_error(struct sge_proto *proto, const char **err);

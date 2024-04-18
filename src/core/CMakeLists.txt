@@ -8,15 +8,16 @@ IF(NOT CMAKE_BUILD_TYPE)
 ENDIF()
 MESSAGE(STATUS "Build Type ${CMAKE_BUILD_TYPE}")
 
-SET(CMAKE_C_FLAGS ${CMAKE_C_FLAGS} "-fvisibility=hidden")
+SET(CMAKE_C_FLAGS ${CMAKE_C_FLAGS} "-fPIC -fvisibility=hidden")
 
 SET(SRC
     compressor.c
     decoder.c
-    radix.c
+    rax.c
     encoder.c
     parser.c
     protocol.c
+
 )
 
-ADD_LIBRARY(${PROJECT_NAME} SHARED ${SRC})
+ADD_LIBRARY(${PROJECT_NAME} STATIC ${SRC})

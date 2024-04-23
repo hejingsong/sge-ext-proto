@@ -17,7 +17,8 @@ SET(SRC
     encoder.c
     parser.c
     protocol.c
-
+    array.c
+    result.c
 )
 
 ADD_LIBRARY(${PROJECT_NAME} STATIC ${SRC})

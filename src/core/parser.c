@@ -38,17 +38,28 @@ static const char *FIELD_TYPES[] = {"integer", "string", NULL};
 
 struct sge_parser {
     struct sge_proto *proto;
-    const char *content;
-    const char *cursor;
-    const char *dir;
-    const char *file;
+    const unsigned char *content;
+    const unsigned char *cursor;
+    const unsigned char *dir;
+    const unsigned char *file;
     size_t size;
     size_t lineno;
 };
 
-static void _do_parse(struct sge_proto *p, const char *content, size_t len, const char *filename);
+static void _do_parse(struct sge_proto *p, const unsigned char *content, size_t len,
+                      const char *filename);
 
-struct sge_block *sge_find_block(struct sge_proto *p, const char *name, size_t len) {
+static int _block_id(void *data) {
+    struct sge_block *block = NULL;
+    if (NULL == data) {
+        return 0;
+    }
+
+    block = (struct sge_block *)data;
+    return block->id;
+}
+
+struct sge_block *sge_find_block(struct sge_proto *p, const unsigned char *name, size_t len) {
     if (NULL == p || NULL == name || len == 0) {
         return NULL;
     }
@@ -111,9 +122,9 @@ static void _filter_comment(struct sge_parser *parser) {
     }
 }
 
-static size_t _parse_string(struct sge_parser *parser, const char **strp) {
+static size_t _parse_string(struct sge_parser *parser, const unsigned char **strp) {
     char c = 0;
-    const char *p = NULL;
+    const unsigned char *p = NULL;
     size_t l = 0;
 
     _filter_comment(parser);
@@ -135,9 +146,9 @@ static size_t _parse_string(struct sge_parser *parser, const char **strp) {
     return l;
 }
 
-static int _field_flag(const char *flag, const size_t fl) {
+static int _field_flag(const unsigned char *flag, const size_t fl) {
     int i = 0;
-    const char *p = NULL;
+    const unsigned char *p = NULL;
 
     if (0 == fl) {
         return FLAG_OPTIONAL;
@@ -154,10 +165,10 @@ static int _field_flag(const char *flag, const size_t fl) {
     return FLAG_UNKNOWN;
 }
 
-static size_t _parse_block_name(struct sge_parser *parser, const char **namep) {
+static size_t _parse_block_name(struct sge_parser *parser, const unsigned char **namep) {
     char c = 0;
     size_t len = 0;
-    const char *name = NULL;
+    const unsigned char *name = NULL;
 
     _filter_comment(parser);
 
@@ -188,7 +199,7 @@ static void _parse_block_id(struct sge_parser *parser, int *idp) {
     char c = 0;
     int id = 0;
     size_t len = 0;
-    const char *start = NULL;
+    const unsigned char *start = NULL;
     char s[24] = {0};
 
     _filter_comment(parser);
@@ -286,8 +297,8 @@ static struct sge_field *_parse_field(struct sge_parser *parser) {
     struct sge_block *block = NULL;
     struct sge_proto *p = parser->proto;
     size_t nl = 0, fl = 0, tl = 0;
-    const char *name = NULL, *f = NULL, *t = NULL;
-    char *str = NULL;
+    const unsigned char *name = NULL, *f = NULL, *t = NULL;
+    unsigned char *str = NULL;
 
     // parse field name
     nl = _parse_string(parser, &name);
@@ -304,9 +315,23 @@ static struct sge_field *_parse_field(struct sge_parser *parser) {
                             parser->lineno);
         return NULL;
     }
+
+    type = _field_type(t, tl);
+    if (type & FIELD_TYPE_UNKNOWN) {
+        block = sge_find_block(p, t, tl);
+        if (NULL == block) {
+            SGE_PROTO_ERROR_ARG(p, SGE_ERR_PARSER_ERROR, "unknown field type: %.*s at line: %lu",
+                                tl, t, parser->lineno);
+            return NULL;
+        }
+        type = FIELD_TYPE_CUSTOM;
+    }
     if (0 == strncmp(parser->cursor, "[]", 2)) {
         is_arr = 1;
         parser->cursor += 2;
+    }
+    if (is_arr) {
+        type |= FIELD_TYPE_LIST;
     }
 
     // parse field flag
@@ -334,21 +359,7 @@ static struct sge_field *_parse_field(struct sge_parser *parser) {
     }
     _move_cursor(parser);
 
-    type = _field_type(t, tl);
-    if (is_arr) {
-        type |= FIELD_TYPE_LIST;
-    }
-
-    if (type & FIELD_TYPE_UNKNOWN) {
-        block = sge_find_block(p, t, tl);
-        if (NULL == block) {
-            SGE_PROTO_ERROR_ARG(p, SGE_ERR_PARSER_ERROR, "unknown field type: %.*s at line: %lu",
-                                tl, t, parser->lineno);
-            return NULL;
-        }
-    }
-
-    str = (char *)sge_malloc(nl + 1);
+    str = (unsigned char *)sge_malloc(nl + 1);
     if (NULL == str) {
         SGE_PROTO_ERROR(p, SGE_ERR_MEMORY_NOT_ENOUGH);
         return NULL;
@@ -365,6 +376,7 @@ static struct sge_field *_parse_field(struct sge_parser *parser) {
 
     field->name = str;
     field->flags = flags;
+    field->type = type;
     field->id = 0;
     field->tid = 0;
     if (block) {
@@ -499,7 +511,7 @@ static void _destroy_block(struct sge_block *b) {
 
 static struct sge_block *_parse_one_block(struct sge_parser *parser) {
     size_t name_len = 0;
-    const char *name = NULL;
+    const unsigned char *name = NULL;
     int block_id = 0;
     int nf = 0;
     struct sge_field *fields = NULL;
@@ -539,7 +551,7 @@ static struct sge_block *_parse_one_block(struct sge_parser *parser) {
 static void _parse_include(struct sge_parser *parser) {
     char c;
     int len = 0;
-    const char *start = NULL;
+    const unsigned char *start = NULL;
     char filename[FILENAME_MAX];
 
     if (0 != strncmp(parser->cursor, "@include", 8)) {
@@ -590,14 +602,15 @@ static void _parse_include(struct sge_parser *parser) {
     _do_parse(parser->proto, NULL, 0, filename);
 }
 
-static void _do_parse(struct sge_proto *p, const char *content, size_t len, const char *filename) {
+static void _do_parse(struct sge_proto *p, const unsigned char *content, size_t len,
+                      const char *filename) {
     int ret = 0;
     struct stat s;
     FILE *fp = NULL;
-    char *buffer = NULL;
-    char *realfile = NULL;
-    char curdir[FILENAME_MAX];
-    const char *dir = NULL;
+    unsigned char *buffer = NULL;
+    unsigned char *realfile = NULL;
+    unsigned char curdir[FILENAME_MAX];
+    const unsigned char *dir = NULL;
     struct sge_parser parser, *cur = NULL;
     struct sge_block *block = NULL;
     sge_radix_iter rax_iter;
@@ -627,7 +640,7 @@ static void _do_parse(struct sge_proto *p, const char *content, size_t len, cons
         }
         parser.dir = dir;
     } else {
-        buffer = (char *)content;
+        buffer = (unsigned char *)content;
     }
 
     if (NULL == buffer || len == 0) {
@@ -636,7 +649,7 @@ static void _do_parse(struct sge_proto *p, const char *content, size_t len, cons
     }
 
     parser.proto = p;
-    parser.cursor = parser.content = (const char *)buffer;
+    parser.cursor = parser.content = (const unsigned char *)buffer;
     parser.lineno = 1;
     parser.size = len;
     cur = &parser;
@@ -686,9 +699,27 @@ err:
     goto out;
 }
 
-struct sge_proto *sge_parse_content(struct sge_proto *p, const char *content, size_t len,
+struct sge_proto *sge_parse_content(struct sge_proto *p, const unsigned char *content, size_t len,
                                     const char *filename) {
+    struct sge_block *block = NULL;
+    sge_radix_iter rax_iter;
+
     _do_parse(p, content, len, filename);
 
+    if (SGE_OK == p->err.code) {
+        p->blocks = sge_create_array(sge_radix_size(p->block_tree), _block_id);
+        if (NULL == p->blocks) {
+            goto out;
+        }
+        sge_init_radix_iter(p->block_tree, &rax_iter);
+        while (sge_next_radix_iter(&rax_iter)) {
+            block = (struct sge_block *)rax_iter.data;
+            sge_insert_array(p->blocks, (void *)block);
+        }
+        sge_sort_array(p->blocks);
+        sge_destroy_radix_iter(&rax_iter);
+    }
+
+out:
     return p;
 }

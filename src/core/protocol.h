@@ -57,7 +57,7 @@ DLL_PUBLIC struct sge_value {
     union {
         long long i;
         struct {
-            const char *s;
+            const unsigned char *s;
             size_t l;
         } s;
         void *a;  // any
@@ -65,25 +65,50 @@ DLL_PUBLIC struct sge_value {
 };
 
 DLL_PUBLIC struct sge_key {
-    unsigned char t;
+    enum sge_field_type t;  // field type
     size_t idx;
     struct {
-        const char *s;
+        const unsigned char *s;
         size_t l;
     } name;
 };
 
+#define sge_value_integer(v, vv)     \
+    {                                \
+        (v)->t = FIELD_TYPE_INTEGER; \
+        (v)->v.i = (vv);             \
+    }
+
+#define sge_value_string_with_len(v, vv, vl) \
+    {                                        \
+        (v)->t = FIELD_TYPE_STRING;          \
+        (v)->v.s.s = (vv);                   \
+        (v)->v.s.l = (vl);                   \
+    }
+
+#define sge_value_any(v, vv)        \
+    {                               \
+        (v)->t = FIELD_TYPE_CUSTOM; \
+        (v)->v.a = (vv);            \
+    }
+
+#define sge_value_nil(v) \
+    { (v)->t = FIELD_TYPE_UNKNOWN; }
+
 typedef int (*sge_fn_get)(const void *, const struct sge_key *, struct sge_value *);
 typedef void *(*sge_fn_set)(void *, const struct sge_key *, const struct sge_value *);
 
-DLL_PUBLIC struct sge_proto *sge_parse(const char *content, size_t len);
-DLL_PUBLIC struct sge_proto *sge_parse_file(const char *filename);
-DLL_PUBLIC void sge_free_protocol(struct sge_proto *proto);
+// parser
+DLL_PUBLIC struct sge_proto *sge_parse_protocol(const char *content, size_t len);
+DLL_PUBLIC struct sge_proto *sge_parse_protocol_file(const char *filename);
+DLL_PUBLIC void sge_destroy_protocol(struct sge_proto *proto);
 
-DLL_PUBLIC int sge_encode(struct sge_proto *proto, const char *name, const void *ud,
-                          sge_fn_get fn_get, uint8_t *buffer);
-DLL_PUBLIC int sge_decode(struct sge_proto *proto, uint8_t *bin, size_t len, void *ud,
-                          sge_fn_set fn_set);
+// encode/decode
+DLL_PUBLIC int sge_encode_protocol(struct sge_proto *proto, const char *name, const void *ud,
+                                   sge_fn_get fn_get, uint8_t *buffer, size_t *buffer_len);
+DLL_PUBLIC
+int sge_decode_protocol(struct sge_proto *proto, uint8_t *bin, size_t len, void *ud,
+                        sge_fn_set fn_set);
 
 // debug
 DLL_PUBLIC int sge_protocol_error(struct sge_proto *proto, const char **err);

@@ -23,7 +23,7 @@ static struct sge_proto *_alloc_proto(void) {
     return p;
 }
 
-struct sge_proto *sge_parse(const char *content, size_t len) {
+struct sge_proto *sge_parse_protocol(const char *content, size_t len) {
     struct sge_proto *p = NULL;
 
     if (NULL == content || len == 0) {
@@ -34,7 +34,7 @@ struct sge_proto *sge_parse(const char *content, size_t len) {
     return sge_parse_content(p, content, len, NULL);
 }
 
-struct sge_proto *sge_parse_file(const char *filename) {
+struct sge_proto *sge_parse_protocol_file(const char *filename) {
     int ret = 0;
     struct sge_proto *p = NULL;
 
@@ -46,9 +46,52 @@ struct sge_proto *sge_parse_file(const char *filename) {
     return sge_parse_content(p, NULL, 0, filename);
 }
 
-int sge_encode(struct sge_proto *proto, const char *name, const void *ud, sge_fn_get fn_get,
-               uint8_t *buffer) {}
-int sge_decode(struct sge_proto *proto, uint8_t *bin, size_t len, void *ud, sge_fn_set fn_set) {}
+int sge_encode_protocol(struct sge_proto *proto, const char *name, const void *ud,
+                        sge_fn_get fn_get, uint8_t *buffer, size_t *buffer_len) {
+    int ret = 0;
+    size_t buflen = 0;
+    uint8_t *encode_buffer = NULL;
+
+    if (NULL == proto || NULL == name || NULL == ud || NULL == fn_get || NULL == buffer ||
+        NULL == buffer_len) {
+        return SGE_ERROR;
+    }
+
+    ret = sge_encode_proto(proto, name, ud, fn_get, &encode_buffer, &buflen);
+    if (SGE_OK != ret) {
+        return ret;
+    }
+
+    ret = sge_compress_protocol(encode_buffer, buflen, buffer, buffer_len);
+    if (SGE_OK != ret) {
+        *buffer_len = 0;
+        sge_free(encode_buffer);
+        return ret;
+    }
+
+    sge_free(encode_buffer);
+    return SGE_OK;
+}
+int sge_decode_protocol(struct sge_proto *proto, uint8_t *buffer, size_t len, void *ud,
+                        sge_fn_set fn_set) {
+    int ret = 0;
+    uint8_t *proto_buf = NULL;
+    size_t proto_buf_len = 0;
+
+    if (NULL == proto || NULL == buffer || NULL == ud || NULL == fn_set) {
+        return SGE_ERROR;
+    }
+
+    ret = sge_decompress_protocol(buffer, len, &proto_buf, &proto_buf_len);
+    if (SGE_OK != ret) {
+        return ret;
+    }
+
+    ret = sge_decode_proto(proto, proto_buf, proto_buf_len, ud, fn_set);
+    sge_free(proto_buf);
+
+    return ret;
+}
 
 int sge_protocol_error(struct sge_proto *p, const char **err) {
     if (NULL == p) {
@@ -69,14 +112,28 @@ void sge_print_protocol(struct sge_proto *p) {
         bp = (struct sge_block *)iter.data;
         printf("%s %d %d\n", bp->name, bp->id, bp->count);
         for (i = 0; i < bp->count; ++i) {
-            printf("\t%s %d %d %d\n", bp->fields[i].name, bp->fields[i].id, bp->fields[i].tid,
-                   bp->fields[i].flags);
+            printf("\tname(%s) id(%d) tid(%d) type(%d) flags(%d)\n", bp->fields[i].name,
+                   bp->fields[i].id, bp->fields[i].tid, bp->fields[i].type, bp->fields[i].flags);
         }
     }
     sge_destroy_radix_iter(&iter);
 }
 
-void sge_free_protocol(struct sge_proto *proto) {}
+void sge_destroy_protocol(struct sge_proto *proto) {
+    if (NULL == proto) {
+        return;
+    }
+
+    if (proto->blocks) {
+        sge_destroy_array(proto->blocks);
+    }
+
+    if (proto->block_tree) {
+        sge_destroy_radix(proto->block_tree);
+    }
+
+    sge_free(proto);
+}
 
 void sge_format_error(struct sge_proto *p, int code, const char *fmt, ...) {
     size_t len;

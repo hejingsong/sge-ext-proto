@@ -197,18 +197,54 @@ err:
     return ret;
 }
 
+static int _init_proto_header(struct sge_encoder *encoder) {
+    int ret = 0;
+    uint8_t ver = SGE_PROTO_VERSION;
+
+    // crc16 placehold
+    ret = _encode_string(&encoder->result, "  ", 2);
+    SGE_CHECK_PROTO_RESULT();
+
+    ret = _encode_string(&encoder->result, &ver, 1);
+    SGE_CHECK_PROTO_RESULT();
+
+    return SGE_OK;
+err:
+    return SGE_ERROR;
+}
+
+static int _fill_crc16(struct sge_encoder *encoder) {
+    uint8_t crc_high, crc_low;
+    long long crc16 = 0;
+
+    crc16 = _crc16(encoder->result.data + 2, encoder->result.len - 2);
+    encoder->result.len = 0;
+    crc_high = (crc16 >> 8) & 0xFF;
+    crc_low = crc16 & 0xFF;
+    _encode_string(&encoder->result, &crc_low, 1);
+    _encode_string(&encoder->result, &crc_high, 1);
+
+    return SGE_OK;
+}
+
+static int _padding_proto(struct sge_encoder *encoder) {
+    int i = 0;
+    int padding = 8 - (encoder->result.len % 8);
+
+    for (i = 0; i < padding; ++i) {
+        _encode_string(&encoder->result, "\0", 1);
+    }
+}
+
 int sge_encode_proto(struct sge_proto *proto, const unsigned char *name, const void *ud,
                      sge_fn_get fn_get, uint8_t **buffer, size_t *len) {
     int ret = 0, i = 0;
-    uint8_t crc_high, crc_low;
-    long long crc16 = 0;
     struct sge_block *block = NULL;
     struct sge_encoder encoder;
-    uint8_t ver = SGE_PROTO_VERSION;
 
     block = sge_find_radix(proto->block_tree, (unsigned char *)name, strlen(name));
     if (NULL == block) {
-        SGE_PROTO_ERROR_ARG(proto, SGE_ERR_PARSER_ERROR, "count not found protocol name(%s)", name);
+        SGE_PROTO_ERROR_ARG(proto, SGE_ERR_ENCODE_ERROR, "count not found protocol name(%s)", name);
         return SGE_ERROR;
     }
 
@@ -219,28 +255,79 @@ int sge_encode_proto(struct sge_proto *proto, const unsigned char *name, const v
     encoder.result.data = NULL;
     encoder.result.len = 0;
 
-    // crc16 placehold
-    ret = _encode_string(&encoder.result, "  ", 2);
-    SGE_CHECK_PROTO_RESULT();
-
-    ret = _encode_string(&encoder.result, &ver, 1);
+    ret = _init_proto_header(&encoder);
     SGE_CHECK_PROTO_RESULT();
 
     ret = _do_encode(&encoder);
     SGE_CHECK_PROTO_RESULT();
 
-    for (i = 0; i < encoder.result.len % 8; ++i) {
-        _encode_string(&encoder.result, "\0", 1);
-    }
+    _padding_proto(&encoder);
     *len = encoder.result.len;
     *buffer = encoder.result.data;
 
-    crc16 = _crc16(encoder.result.data + 2, encoder.result.len - 2);
+    _fill_crc16(&encoder);
+
+    return SGE_OK;
+err:
+    _destroy_proto_result(&encoder.result);
+    return ret;
+}
+
+int sge_encode_service(struct sge_proto *proto, const unsigned char *service,
+                       const unsigned char *method, const void *ud, sge_fn_get fn_get,
+                       enum sge_encode_type encode_type, uint8_t **buffer, size_t *len) {
+    int ret = 0;
+    struct sge_service *s = NULL;
+    struct sge_method *m = NULL;
+    struct sge_encoder encoder;
+    uint8_t ver = SGE_PROTO_VERSION;
+    long long service_len = 0;
+    long long method_len = 0;
+
+    s = sge_find_radix(proto->service_tree, (unsigned char *)service, strlen(service));
+    if (NULL == s) {
+        SGE_PROTO_ERROR_ARG(proto, SGE_ERR_ENCODE_ERROR, "count not found service name(%s)",
+                            service);
+        return SGE_ERROR;
+    }
+
+    m = sge_find_radix(s->methods, (unsigned char *)method, strlen(method));
+    if (NULL == m) {
+        SGE_PROTO_ERROR_ARG(proto, SGE_ERR_ENCODE_ERROR, "count not found method name(%s:%s)",
+                            service, method);
+        return SGE_ERROR;
+    }
+
+    encoder.proto = proto;
+    if (encode_type == ENCODE_TYPE_REQUEST) {
+        encoder.b = m->req;
+    } else if (encode_type == ENCODE_TYPE_RESPONSE) {
+        encoder.b = m->resp;
+    }
+    encoder.ud = ud;
+    encoder.get = fn_get;
+    encoder.result.data = NULL;
     encoder.result.len = 0;
-    crc_high = (crc16 >> 8) & 0xFF;
-    crc_low = crc16 & 0xFF;
-    _encode_string(&encoder.result, &crc_low, 1);
-    _encode_string(&encoder.result, &crc_high, 1);
+
+    ret = _init_proto_header(&encoder);
+    SGE_CHECK_PROTO_RESULT();
+
+    service_len = strlen(service);
+    _encode_integer(&encoder.result, service_len);
+    _encode_string(&encoder.result, service, service_len);
+
+    method_len = strlen(method);
+    _encode_integer(&encoder.result, method_len);
+    _encode_string(&encoder.result, method, method_len);
+
+    ret = _do_encode(&encoder);
+    SGE_CHECK_PROTO_RESULT();
+
+    _padding_proto(&encoder);
+    *len = encoder.result.len;
+    *buffer = encoder.result.data;
+
+    _fill_crc16(&encoder);
 
     return SGE_OK;
 err:

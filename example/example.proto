@@ -18,7 +18,16 @@ OptionalList 203 {
     list Optional[] optional;
 }
 
-
 OptionalListList 304 {
     list OptionalList[] optional;
+}
+
+
+HelloRequest 404 {
+    message string required;
+}
+
+HelloResponse 405 {
+    age integer required;
+    reply string required;
 }

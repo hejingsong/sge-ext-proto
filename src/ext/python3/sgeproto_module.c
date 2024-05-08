@@ -207,6 +207,118 @@ static void _dealloc(PySgeProto *o) {
     PyObject_Del(o);
 }
 
+static PyObject *_encode_service(PyObject *self, PyObject *args, int encode_type) {
+    int err_code = 0;
+    PyObject *ud = NULL;
+    PyObject *service = NULL, *method = NULL;
+    PyObject *ret = NULL;
+    PySgeProto *proto = NULL;
+    const char *service_name = NULL, *method_name = NULL;
+    const char *err = NULL;
+    uint8_t buffer[1024];
+    size_t buffer_len = 0;
+
+    if (!PyArg_ParseTuple(args, "UUO", &service, &method, &ud)) {
+        PyErr_Format(PyExc_TypeError, "args 1/2 must be str. args 3 must be dict");
+        Py_RETURN_NONE;
+    }
+
+    if (!PyUnicode_Check(service)) {
+        PyErr_Format(PyExc_TypeError, "args 1 must be str");
+        Py_RETURN_NONE;
+    }
+    if (!PyUnicode_Check(method)) {
+        PyErr_Format(PyExc_TypeError, "args 2 must be str");
+        Py_RETURN_NONE;
+    }
+    if (!PyDict_Check(ud)) {
+        PyErr_Format(PyExc_TypeError, "args 3 must be dict");
+        Py_RETURN_NONE;
+    }
+
+    Py_INCREF(self);
+    Py_INCREF(ud);
+    Py_INCREF(service);
+    Py_INCREF(method);
+
+    proto = (PySgeProto *)self;
+    service_name = PyUnicode_AsUTF8(service);
+    method_name = PyUnicode_AsUTF8(method);
+    err_code = sge_rpc_encode(proto->proto, (const unsigned char *)service_name,
+                              (const unsigned char *)method_name, ud, _get, encode_type, buffer,
+                              &buffer_len);
+    if (SGE_OK != err_code) {
+        err_code = sge_protocol_error(proto->proto, &err);
+        PyErr_Format(PyExc_RuntimeError, "encode error(%d), msg(%s).", err_code, err);
+        goto out;
+    }
+
+    ret = PyBytes_FromStringAndSize((const char *)buffer, buffer_len);
+out:
+    Py_DECREF(self);
+    Py_DECREF(ud);
+    Py_DECREF(service);
+    Py_DECREF(method);
+
+    return ret;
+}
+
+static PyObject *_encodeRequest(PyObject *self, PyObject *args) {
+    return _encode_service(self, args, ENCODE_TYPE_REQUEST);
+}
+
+static PyObject *_encodeResponse(PyObject *self, PyObject *args) {
+    return _encode_service(self, args, ENCODE_TYPE_RESPONSE);
+}
+
+static PyObject *_decodeService(PyObject *self, PyObject *buffer) {
+    int err_code = 0;
+    char *s = NULL;
+    const char *err = NULL;
+    Py_ssize_t len = 0;
+    PyObject *obj = NULL;
+    PySgeProto *proto = NULL;
+    unsigned char service[64];
+    unsigned char method[64];
+
+    if (!PyBytes_Check(buffer)) {
+        PyErr_Format(PyExc_TypeError, "args 1 must be bytes.");
+        Py_RETURN_NONE;
+    }
+
+    Py_INCREF(self);
+    Py_INCREF(buffer);
+
+    PyBytes_AsStringAndSize(buffer, &s, &len);
+    obj = PyDict_New();
+    if (obj == NULL) {
+        PyErr_NoMemory();
+        goto out;
+    }
+
+    proto = (PySgeProto *)self;
+    if (SGE_OK != sge_rpc_decode(proto->proto, (uint8_t *)s, len, obj, _set, service, method)) {
+        err_code = sge_protocol_error(proto->proto, &err);
+        PyErr_Format(PyExc_RuntimeError, "decode error(%d). msg(%s).", err_code, err);
+        Py_DECREF(obj);
+        obj = NULL;
+    }
+
+out:
+    Py_DECREF(self);
+    Py_DECREF(buffer);
+
+    if (NULL == obj) {
+        Py_RETURN_NONE;
+    }
+
+    PyObject *result = PyDict_New();
+    PyDict_SetItemString(result, "service", PyUnicode_FromString((const char *)service));
+    PyDict_SetItemString(result, "method", PyUnicode_FromString((const char *)method));
+    PyDict_SetItemString(result, "result", obj);
+    return result;
+}
+
 PyDoc_STRVAR(sge_proto_doc,
              "dict() -> new empty dictionary\n"
              "dict(mapping) -> new dictionary initialized from a mapping object's\n"
@@ -218,10 +330,14 @@ PyDoc_STRVAR(sge_proto_doc,
              "dict(**kwargs) -> new dictionary initialized with the name=value pairs\n"
              "    in the keyword argument list.  For example:  dict(one=1, two=2)");
 
-static PyMethodDef methods[] = {{"encode", _encode, METH_VARARGS, "sg protocol encode"},
-                                {"decode", _decode, METH_O, "sg protocol decode"},
-                                {"debug", _debug, METH_NOARGS, "print proto structure"},
-                                {NULL, NULL}};
+static PyMethodDef methods[] = {
+    {"encode", _encode, METH_VARARGS, "sge protocol encode"},
+    {"decode", _decode, METH_O, "sge protocol decode"},
+    {"encodeRequest", _encodeRequest, METH_VARARGS, "sge protocol encode request"},
+    {"encodeResponse", _encodeResponse, METH_VARARGS, "sge protocol encode response"},
+    {"decodeService", _decodeService, METH_O, "sge protocol decode service"},
+    {"debug", _debug, METH_NOARGS, "print proto structure"},
+    {NULL, NULL}};
 
 static PyTypeObject PyProto_Type = {
     PyVarObject_HEAD_INIT(NULL, 0) "SgeProto.Proto",

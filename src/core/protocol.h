@@ -52,6 +52,8 @@ DLL_PUBLIC enum sge_field_type {
     FIELD_TYPE_UNKNOWN = 1 << 7
 };
 
+DLL_PUBLIC enum sge_encode_type { ENCODE_TYPE_REQUEST = 1, ENCODE_TYPE_RESPONSE };
+
 DLL_PUBLIC struct sge_value {
     enum sge_field_type t;  // field type
     union {
@@ -106,12 +108,18 @@ DLL_PUBLIC void sge_destroy_protocol(struct sge_proto *proto);
 // encode/decode
 DLL_PUBLIC int sge_encode_protocol(struct sge_proto *proto, const char *name, const void *ud,
                                    sge_fn_get fn_get, uint8_t *buffer, size_t *buffer_len);
-DLL_PUBLIC
-int sge_decode_protocol(struct sge_proto *proto, uint8_t *bin, size_t len, void *ud,
-                        sge_fn_set fn_set);
+DLL_PUBLIC int sge_decode_protocol(struct sge_proto *proto, uint8_t *bin, size_t len, void *ud,
+                                   sge_fn_set fn_set);
 
 // debug
 DLL_PUBLIC int sge_protocol_error(struct sge_proto *proto, const char **err);
 DLL_PUBLIC void sge_print_protocol(struct sge_proto *proto);
 
+// rpc
+DLL_PUBLIC int sge_rpc_encode(struct sge_proto *proto, const unsigned char *service,
+                              const unsigned char *method, const void *ud, sge_fn_get fn_get,
+                              enum sge_encode_type encode_type, uint8_t *buffer,
+                              size_t *buffer_len);
+DLL_PUBLIC int sge_rpc_decode(struct sge_proto *proto, uint8_t *bin, size_t len, void *ud,
+                              sge_fn_set fn_set, unsigned char *service, unsigned char *method);
 #endif

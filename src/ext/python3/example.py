@@ -1,6 +1,6 @@
 import SgeProto
 
-filename = "../../../example/example.proto"
+filename = "../../../example/rpc.proto"
 
 base = {
     "name": "SgeProto"
@@ -96,4 +96,21 @@ print(data)
 
 s = protocol.encode("OptionalListList", optional_list_list1)
 data = protocol.decode(s)
+print(data)
+
+
+hello_request = {
+    "message": "Hello World."
+}
+s = protocol.encodeRequest("Example", "Hello", hello_request)
+data = protocol.decodeService(s)
+print(data)
+
+
+hello_response = {
+    "age": 10,
+    "reply": "Hello World."
+}
+s = protocol.encodeResponse("Example", "Hello", hello_response)
+data = protocol.decodeService(s)
 print(data)

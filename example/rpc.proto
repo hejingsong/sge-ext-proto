@@ -1,0 +1,5 @@
+@include "example.proto"
+
+service Example {
+  rpc Hello(HelloRequest) -> HelloResponse;
+}

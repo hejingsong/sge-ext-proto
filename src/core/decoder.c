@@ -205,15 +205,7 @@ static int _do_decode(struct sge_decoder *decoder) {
     return SGE_OK;
 }
 
-int sge_decode_proto(struct sge_proto *proto, uint8_t *bin, size_t len, void *ud,
-                     sge_fn_set fn_set) {
-    int ret = SGE_OK;
-    struct sge_decoder decoder;
-
-    if (NULL == proto || NULL == bin || len <= 0) {
-        return SGE_ERROR;
-    }
-
+static int _check_proto_header(struct sge_proto *proto, uint8_t *bin, size_t len) {
     if (SGE_OK != _verify_crc(bin, len)) {
         SGE_PROTO_ERROR_ARG(proto, SGE_ERR_DECODE_ERROR, "crc not match");
         return SGE_ERROR;
@@ -225,6 +217,22 @@ int sge_decode_proto(struct sge_proto *proto, uint8_t *bin, size_t len, void *ud
         return SGE_ERROR;
     }
 
+    return SGE_OK;
+}
+
+int sge_decode_proto(struct sge_proto *proto, uint8_t *bin, size_t len, void *ud,
+                     sge_fn_set fn_set) {
+    int ret = SGE_OK;
+    struct sge_decoder decoder;
+
+    if (NULL == proto || NULL == bin || len <= 0) {
+        return SGE_ERROR;
+    }
+
+    if (SGE_OK != _check_proto_header(proto, bin, len)) {
+        return SGE_ERROR;
+    }
+
     decoder.b = NULL;
     decoder.proto = proto;
     decoder.cursor = 3;
@@ -232,6 +240,55 @@ int sge_decode_proto(struct sge_proto *proto, uint8_t *bin, size_t len, void *ud
     decoder.len = len;
     decoder.set = fn_set;
     decoder.ud = ud;
+
+    return _do_decode(&decoder);
+}
+
+int sge_decode_service(struct sge_proto *proto, uint8_t *bin, size_t len, void *ud,
+                       sge_fn_set fn_set, unsigned char *service, unsigned char *method) {
+    int ret = SGE_OK;
+    struct sge_decoder decoder;
+    unsigned char *service_name = NULL, *method_name = NULL;
+    size_t service_len = 0, method_len = 0;
+    struct sge_service *s = NULL;
+    struct sge_method *m = NULL;
+
+    if (NULL == proto || NULL == bin || len <= 0) {
+        return SGE_ERROR;
+    }
+
+    if (SGE_OK != _check_proto_header(proto, bin, len)) {
+        return SGE_ERROR;
+    }
+
+    decoder.b = NULL;
+    decoder.proto = proto;
+    decoder.cursor = 3;
+    decoder.bin = bin;
+    decoder.len = len;
+    decoder.set = fn_set;
+    decoder.ud = ud;
+
+    _decode_string(&decoder, (const unsigned char **)&service_name, &service_len);
+    s = sge_find_radix(proto->service_tree, service_name, service_len);
+    if (NULL == s) {
+        SGE_PROTO_ERROR_ARG(proto, SGE_ERR_ENCODE_ERROR, "count not found service name(%.*s)",
+                            service_len, service_name);
+        return SGE_ERROR;
+    }
+
+    _decode_string(&decoder, (const unsigned char **)&method_name, &method_len);
+    m = sge_find_radix(s->methods, method_name, method_len);
+    if (NULL == m) {
+        SGE_PROTO_ERROR_ARG(proto, SGE_ERR_ENCODE_ERROR, "count not found method name(%.*s:%.*s)",
+                            service_len, service_name, method_len, method_name);
+        return SGE_ERROR;
+    }
+
+    memcpy(service, service_name, service_len);
+    service[service_len] = '\0';
+    memcpy(method, method_name, method_len);
+    method[method_len] = '\0';
 
     return _do_decode(&decoder);
 }

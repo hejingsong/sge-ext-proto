@@ -15,6 +15,9 @@
 #define FIELD_DELIMITER ':'
 #define FIELD_TERMINATOR ';'
 #define UTF8_BOM_SIZE 3
+#define REQ_LEFT_CHAR '('
+#define REQ_RIGHT_CHAR ')'
+#define RPC_RETURN_DELIMITER "->"
 
 #define SGE_EOF(p) (*(p)->cursor == '\0')
 #define VALID_NUMBER(c) ((c) >= 48 && (c) <= 57)
@@ -144,6 +147,113 @@ static size_t _parse_string(struct sge_parser *parser, const unsigned char **str
 
     *strp = p;
     return l;
+}
+
+static struct sge_block *_alloc_block(int id, const char *name, size_t name_len, int nf,
+                                      struct sge_field *fs) {
+    struct sge_block *b = NULL;
+    char *buf;
+
+    buf = (char *)sge_malloc(name_len + 1);
+    if (NULL == buf) {
+        return NULL;
+    }
+
+    memcpy(buf, name, name_len);
+    buf[name_len] = '\0';
+
+    b = (struct sge_block *)sge_malloc(sizeof(*b));
+    if (NULL == b) {
+        goto err;
+    }
+
+    b->name = buf;
+    b->fields = fs;
+    b->count = nf;
+    b->id = id;
+
+    return b;
+err:
+    sge_free(buf);
+    return NULL;
+}
+
+static void _destroy_block(struct sge_block *b) {
+    int i = 0;
+
+    if (NULL == b) {
+        return;
+    }
+
+    for (i = 0; i < b->count; ++i) {
+        sge_free(b->fields[i].name);
+    }
+
+    sge_free(b->fields);
+    sge_free(b->name);
+    sge_free(b);
+}
+
+static void _destroy_method(struct sge_method *method) {
+    if (NULL == method) {
+        return;
+    }
+
+    sge_free(method);
+}
+
+static void _destroy_service(struct sge_service *service) {
+    sge_radix_iter rax_iter;
+    struct sge_method *method = NULL;
+
+    if (NULL == service) {
+        return;
+    }
+
+    sge_init_radix_iter(service->methods, &rax_iter);
+    while (sge_next_radix_iter(&rax_iter)) {
+        method = (struct sge_method *)rax_iter.data;
+        _destroy_method(method);
+    }
+    sge_destroy_radix_iter(&rax_iter);
+    sge_free(service);
+}
+
+static int _alloc_service(struct sge_service **service, const unsigned char *name,
+                          size_t name_len) {
+    struct sge_service *s = NULL;
+    size_t alloc_size = sizeof(struct sge_service) + sizeof(unsigned char) * (name_len + 1);
+
+    s = sge_malloc(alloc_size);
+    if (NULL == s) {
+        return SGE_ERROR;
+    }
+    memset(s, 0, alloc_size);
+    memcpy(s->name, name, name_len);
+
+    s->methods = sge_create_radix();
+    if (NULL == s->methods) {
+        sge_free(s);
+        return SGE_ERROR;
+    }
+
+    *service = s;
+    return SGE_OK;
+}
+
+static int _alloc_method(struct sge_method **method, const unsigned char *name, size_t name_len) {
+    struct sge_method *m = NULL;
+    size_t alloc_size = sizeof(struct sge_method) + sizeof(unsigned char) * (name_len + 1);
+
+    m = sge_malloc(alloc_size);
+    if (NULL == m) {
+        return SGE_ERROR;
+    }
+    memset(m, 0, alloc_size);
+    memcpy(m->name, name, name_len);
+
+    *method = m;
+    return SGE_OK;
 }
 
 static int _field_flag(const unsigned char *flag, const size_t fl) {
@@ -386,7 +496,7 @@ static struct sge_field *_parse_field(struct sge_parser *parser) {
     return field;
 }
 
-static void _parse_block_body(struct sge_parser *parser, int *nfp, struct sge_field **fsp) {
+static void _parse_message_body(struct sge_parser *parser, int *nfp, struct sge_field **fsp) {
     int nf = 0;
     char c = 0, fin = 0;
     struct sge_field *f = NULL, *farr = NULL;
@@ -464,64 +574,185 @@ err:
     *fsp = NULL;
 }
 
-static struct sge_block *_alloc_block(int id, const char *name, size_t name_len, int nf,
-                                      struct sge_field *fs) {
-    struct sge_block *b = NULL;
-    char *buf;
+static int _parse_service_method(struct sge_parser *parser, struct sge_method **method) {
+    int type = 0, flags = 0, ret = 0;
+    unsigned char c = 0;
+    struct sge_proto *p = parser->proto;
+    size_t len = 0, name_len = 0, req_block_len = 0, resp_block_len = 0;
+    const unsigned char *name = NULL, *req_block_name = NULL, *resp_block_name = NULL;
+    const unsigned char *str = NULL;
+    struct sge_block *req_block = NULL, *resp_block = NULL;
+    struct sge_method* mp = NULL;
 
-    buf = (char *)sge_malloc(name_len + 1);
-    if (NULL == buf) {
-        return NULL;
+    // parse rpc keyword
+    len = _parse_string(parser, &str);
+    if (0 == len) {
+        SGE_PROTO_ERROR_ARG(parser->proto, SGE_ERR_PARSER_ERROR, "invalid syntax at %s(%lu)",
+                            parser->file, parser->lineno);
+        return SGE_ERROR;
     }
 
-    memcpy(buf, name, name_len);
-    buf[name_len] = '\0';
-
-    b = (struct sge_block *)sge_malloc(sizeof(*b));
-    if (NULL == b) {
-        goto err;
+    if (strncmp(str, SGE_RPC_KEYWORD, len) != 0) {
+        SGE_PROTO_ERROR_ARG(parser->proto, SGE_ERR_PARSER_ERROR,
+                            "invalid syntax at %s(%lu), not found rpc keyword", parser->file,
+                            parser->lineno);
+        return SGE_ERROR;
     }
 
-    b->name = buf;
-    b->fields = fs;
-    b->count = nf;
-    b->id = id;
+    // parse method name
+    name_len = _parse_string(parser, &name);
+    if (0 == name_len) {
+        SGE_PROTO_ERROR_ARG(p, SGE_ERR_PARSER_ERROR, "invalid method name at line: %lu",
+                            parser->lineno);
+        return SGE_ERROR;
+    }
 
-    return b;
-err:
-    sge_free(buf);
-    return NULL;
+    _filter_comment(parser);
+    if (SGE_EOF(parser)) {
+        SGE_PROTO_ERROR_ARG(p, SGE_ERR_PARSER_ERROR, "invalid syntax at %s(%lu)", parser->file,
+                            parser->lineno);
+        return SGE_ERROR;
+    }
+
+    c = *parser->cursor;
+    if (c != REQ_LEFT_CHAR) {
+        SGE_PROTO_ERROR_ARG(p, SGE_ERR_PARSER_ERROR, "invalid syntax at %s(%lu)", parser->file,
+                            parser->lineno);
+        return SGE_ERROR;
+    }
+    _move_cursor(parser);
+
+    // parse request block name
+    req_block_len = _parse_string(parser, &req_block_name);
+    if (0 == req_block_len) {
+        SGE_PROTO_ERROR_ARG(p, SGE_ERR_PARSER_ERROR, "invalid request block name at line: %lu",
+                            parser->lineno);
+        return SGE_ERROR;
+    }
+    req_block = sge_find_radix(p->block_tree, (unsigned char *)req_block_name, req_block_len);
+    if (NULL == req_block) {
+        SGE_PROTO_ERROR_ARG(p, SGE_ERR_PARSER_ERROR, "block(%.*s) not found at %s:%lu",
+                            req_block_len, req_block_name, parser->file, parser->lineno);
+        return SGE_ERROR;
+    }
+
+    _filter_comment(parser);
+    if (SGE_EOF(parser)) {
+        SGE_PROTO_ERROR_ARG(p, SGE_ERR_PARSER_ERROR, "invalid syntax at %s(%lu)", parser->file,
+                            parser->lineno);
+        return SGE_ERROR;
+    }
+
+    c = *parser->cursor;
+    if (c != REQ_RIGHT_CHAR) {
+        SGE_PROTO_ERROR_ARG(p, SGE_ERR_PARSER_ERROR, "invalid syntax at %s(%lu)", parser->file,
+                            parser->lineno);
+        return SGE_ERROR;
+    }
+    _move_cursor(parser);
+
+    _filter_comment(parser);
+    if (SGE_EOF(parser)) {
+        SGE_PROTO_ERROR_ARG(p, SGE_ERR_PARSER_ERROR, "invalid syntax at %s(%lu)", parser->file,
+                            parser->lineno);
+        return SGE_ERROR;
+    }
+
+    if (strncmp(parser->cursor, RPC_RETURN_DELIMITER, 2) != 0) {
+        SGE_PROTO_ERROR_ARG(p, SGE_ERR_PARSER_ERROR, "invalid syntax at %s(%lu)", parser->file,
+                            parser->lineno);
+        return SGE_ERROR;
+    }
+    _move_cursor(parser);
+    _move_cursor(parser);
+
+    // parse response block name
+    resp_block_len = _parse_string(parser, &resp_block_name);
+    if (0 == resp_block_len) {
+        SGE_PROTO_ERROR_ARG(p, SGE_ERR_PARSER_ERROR, "invalid response block name at line: %lu",
+                            parser->lineno);
+        return SGE_ERROR;
+    }
+
+    resp_block = sge_find_radix(p->block_tree, (unsigned char *)resp_block_name, resp_block_len);
+    if (NULL == resp_block) {
+        SGE_PROTO_ERROR_ARG(p, SGE_ERR_PARSER_ERROR, "block(%.*s) not found at %s:%lu",
+                            resp_block_len, resp_block_name, parser->file, parser->lineno);
+        return SGE_ERROR;
+    }
+
+    // parse field end
+    _filter_comment(parser);
+    if (SGE_EOF(parser)) {
+        SGE_PROTO_ERROR_ARG(p, SGE_ERR_PARSER_ERROR, "invalid syntax at %s(%lu)", parser->file,
+                            parser->lineno);
+        return SGE_ERROR;
+    }
+    c = *parser->cursor;
+    if (c != FIELD_TERMINATOR) {
+        SGE_PROTO_ERROR_ARG(p, SGE_ERR_PARSER_ERROR, "invalid syntax at %s(%lu)", parser->file,
+                            parser->lineno);
+        return SGE_ERROR;
+    }
+    _move_cursor(parser);
+
+    ret = _alloc_method(&mp, name, name_len);
+    if (SGE_ERROR == ret) {
+        SGE_PROTO_ERROR(p, SGE_ERR_MEMORY_NOT_ENOUGH);
+        return SGE_ERROR;
+    }
+    mp->req = req_block;
+    mp->resp = resp_block;
+    *method = mp;
+
+    return SGE_OK;
 }
 
-static void _destroy_block(struct sge_block *b) {
-    int i = 0;
+static int _parse_service_body(struct sge_parser *parser, struct sge_service *service) {
+    int ret = 0;
+    unsigned char c = 0, fin = 0;
+    struct sge_method *method = NULL;
 
-    if (NULL == b) {
-        return;
+    _filter_comment(parser);
+    if (SGE_EOF(parser)) {
+        SGE_PROTO_ERROR_ARG(parser->proto, SGE_ERR_PARSER_ERROR,
+                            "undefined block body at line: %lu", parser->lineno);
+        return SGE_ERROR;
     }
 
-    for (i = 0; i < b->count; ++i) {
-        sge_free(b->fields[i].name);
+    c = *parser->cursor;
+    if (c != LEFT_BODY_CHAR) {
+        SGE_PROTO_ERROR_ARG(parser->proto, SGE_ERR_PARSER_ERROR, "invalid syntax at %s(%lu)",
+                            parser->file, parser->lineno);
+        return SGE_ERROR;
     }
 
-    sge_free(b->fields);
-    sge_free(b->name);
-    sge_free(b);
+    _move_cursor(parser);
+    while (!SGE_EOF(parser)) {
+        _filter_comment(parser);
+        c = *parser->cursor;
+        if (c == RIGHT_BODY_CHAR) {
+            fin = 1;
+            _move_cursor(parser);
+            break;
+        }
+
+        ret = _parse_service_method(parser, &method);
+        if (SGE_OK != ret) {
+            return SGE_ERROR;
+        }
+
+        sge_insert_radix(service->methods, method->name, strlen(method->name), (void *)method);
+    }
 }
 
-static struct sge_block *_parse_one_block(struct sge_parser *parser) {
-    size_t name_len = 0;
-    const unsigned char *name = NULL;
+static struct sge_block *_parse_one_message(struct sge_parser *parser, const unsigned char *name,
+                                            size_t name_len) {
     int block_id = 0;
     int nf = 0;
     struct sge_field *fields = NULL;
     struct sge_block *block = NULL;
     struct sge_proto *p = parser->proto;
-
-    name_len = _parse_block_name(parser, &name);
-    if (HAS_ERROR(&p->err)) {
-        return NULL;
-    }
 
     if (sge_find_radix(p->block_tree, (unsigned char *)name, name_len)) {
         SGE_PROTO_ERROR_ARG(p, SGE_ERR_PARSER_ERROR, "block(%.*s) already exists at %s:%lu",
@@ -534,7 +765,7 @@ static struct sge_block *_parse_one_block(struct sge_parser *parser) {
         return NULL;
     }
 
-    _parse_block_body(parser, &nf, &fields);
+    _parse_message_body(parser, &nf, &fields);
     if (HAS_ERROR(&p->err)) {
         return NULL;
     }
@@ -546,6 +777,69 @@ static struct sge_block *_parse_one_block(struct sge_parser *parser) {
     }
 
     return block;
+}
+
+static struct sge_service *_parse_one_service(struct sge_parser *parser) {
+    int ret = 0;
+    size_t name_len = 0;
+    const unsigned char *name = NULL;
+    struct sge_proto *p = parser->proto;
+    struct sge_service *service = NULL;
+
+    name_len = _parse_block_name(parser, &name);
+    if (HAS_ERROR(&p->err)) {
+        return NULL;
+    }
+
+    if (sge_find_radix(p->service_tree, (unsigned char *)name, name_len)) {
+        SGE_PROTO_ERROR_ARG(p, SGE_ERR_PARSER_ERROR, "service(%.*s) already exists at %s:%lu",
+                            name_len, name, parser->file, parser->lineno);
+        return NULL;
+    }
+
+    ret = _alloc_service(&service, name, name_len);
+    if (SGE_ERROR == ret) {
+        SGE_PROTO_ERROR(p, SGE_ERR_MEMORY_NOT_ENOUGH);
+        return NULL;
+    }
+
+    ret = _parse_service_body(parser, service);
+    if (SGE_ERROR == ret) {
+        _destroy_service(service);
+        return NULL;
+    }
+
+    return service;
+}
+
+static int _parse_one_block(struct sge_parser *parser, struct sge_block **blockp,
+                            struct sge_service **servicep) {
+    size_t name_len = 0;
+    const unsigned char *name = NULL;
+    struct sge_block *block = NULL;
+    struct sge_service *service = NULL;
+    struct sge_proto *p = parser->proto;
+
+    name_len = _parse_block_name(parser, &name);
+    if (HAS_ERROR(&p->err)) {
+        return SGE_ERROR;
+    }
+
+    if (strncmp(name, SGE_SERVICE_KEYWORD, name_len) == 0) {
+        service = _parse_one_service(parser);
+        if (NULL == service) {
+            return SGE_ERROR;
+        }
+        *servicep = service;
+        return BLOCK_TYPE_SERVICE;
+    } else {
+        block = _parse_one_message(parser, name, name_len);
+        if (NULL == block) {
+            return SGE_ERROR;
+        }
+        *blockp = block;
+        return BLOCK_TYPE_MESSAGE;
+    }
 }
 
 static void _parse_include(struct sge_parser *parser) {
@@ -605,6 +899,7 @@ static void _parse_include(struct sge_parser *parser) {
 static void _do_parse(struct sge_proto *p, const unsigned char *content, size_t len,
                       const char *filename) {
     int ret = 0;
+    int block_type = 0;
     struct stat s;
     FILE *fp = NULL;
     unsigned char *buffer = NULL;
@@ -613,6 +908,7 @@ static void _do_parse(struct sge_proto *p, const unsigned char *content, size_t 
     const unsigned char *dir = NULL;
     struct sge_parser parser, *cur = NULL;
     struct sge_block *block = NULL;
+    struct sge_service *service = NULL;
     sge_radix_iter rax_iter;
 
     if (filename) {
@@ -670,13 +966,18 @@ static void _do_parse(struct sge_proto *p, const unsigned char *content, size_t 
             break;
         }
 
-        block = _parse_one_block(cur);
-        if (NULL == block) {
+        block_type = _parse_one_block(cur, &block, &service);
+        if (SGE_ERROR == block_type) {
             goto err;
-        } else {
+        }
+
+        if (BLOCK_TYPE_MESSAGE == block_type) {
             p->count += 1;
             sge_insert_radix(p->block_tree, (unsigned char *)block->name, strlen(block->name),
                              block);
+        } else if (BLOCK_TYPE_SERVICE == block_type) {
+            sge_insert_radix(p->service_tree, (unsigned char *)service->name, strlen(service->name),
+                             service);
         }
     }
 
@@ -695,7 +996,13 @@ err:
         _destroy_block(block);
     }
     sge_destroy_radix_iter(&rax_iter);
-    sge_destroy_radix(p->block_tree);
+
+    sge_init_radix_iter(p->service_tree, &rax_iter);
+    while (sge_next_radix_iter(&rax_iter)) {
+        service = (struct sge_service *)rax_iter.data;
+        _destroy_service(service);
+    }
+    sge_destroy_radix_iter(&rax_iter);
     goto out;
 }
 

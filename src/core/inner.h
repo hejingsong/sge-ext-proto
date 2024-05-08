@@ -102,10 +102,26 @@ struct sge_block {
     struct sge_field *fields;             // field array
 };
 
+#define SGE_SERVICE_KEYWORD "service"
+#define SGE_RPC_KEYWORD "rpc"
+struct sge_method {
+    struct sge_block *req;   // request block
+    struct sge_block *resp;  // response block
+    unsigned char name[0];   // method name
+};
+
+struct sge_service {
+    sge_radix *methods;     // methods radix tree
+    unsigned char name[0];  // service name
+};
+
+enum sge_block_type { BLOCK_TYPE_MESSAGE = 1, BLOCK_TYPE_SERVICE = 2 };
+
 struct sge_proto {
     unsigned int count;        // block number
     struct sge_array *blocks;  // block array
     sge_radix *block_tree;     // block radix tree
+    sge_radix *service_tree;   // service radix tree
     struct {
         int code;
         char msg[SGE_PROTO_ERROR_MSG_LEN];
@@ -165,4 +181,10 @@ struct sge_proto_result {
 int sge_append_result(struct sge_proto_result *r, const uint8_t *str, size_t len);
 int sge_destroy_result(struct sge_proto_result *r);
 
+// service
+int sge_encode_service(struct sge_proto *proto, const unsigned char *service,
+                       const unsigned char *method, const void *ud, sge_fn_get fn_get,
+                       enum sge_encode_type encode_type, uint8_t **buffer, size_t *len);
+int sge_decode_service(struct sge_proto *proto, uint8_t *bin, size_t len, void *ud,
+                       sge_fn_set fn_set, unsigned char *service, unsigned char *method);
 #endif

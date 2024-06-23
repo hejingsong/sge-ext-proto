@@ -103,6 +103,7 @@ struct sge_block {
 };
 
 #define SGE_SERVICE_KEYWORD "service"
+#define SGE_MESSAGE_KEYWORD "message"
 #define SGE_RPC_KEYWORD "rpc"
 struct sge_method {
     struct sge_block *req;   // request block

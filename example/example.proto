@@ -1,33 +1,33 @@
 @include "base.proto"
 
-Person 200 {
+message Person 200 {
     base_info Base required;
 }
 
-PersonList 201 {
+message PersonList 201 {
     base_info Base[] required;
 }
 
 
-Optional 202 {
+message Optional 202 {
     age integer optional;
     name string optional;
 }
 
-OptionalList 203 {
+message OptionalList 203 {
     list Optional[] optional;
 }
 
-OptionalListList 304 {
+message OptionalListList 304 {
     list OptionalList[] optional;
 }
 
 
-HelloRequest 404 {
+message HelloRequest 404 {
     message string required;
 }
 
-HelloResponse 405 {
+message HelloResponse 405 {
     age integer required;
     reply string required;
 }

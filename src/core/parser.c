@@ -582,7 +582,7 @@ static int _parse_service_method(struct sge_parser *parser, struct sge_method **
     const unsigned char *name = NULL, *req_block_name = NULL, *resp_block_name = NULL;
     const unsigned char *str = NULL;
     struct sge_block *req_block = NULL, *resp_block = NULL;
-    struct sge_method* mp = NULL;
+    struct sge_method *mp = NULL;
 
     // parse rpc keyword
     len = _parse_string(parser, &str);
@@ -746,13 +746,19 @@ static int _parse_service_body(struct sge_parser *parser, struct sge_service *se
     }
 }
 
-static struct sge_block *_parse_one_message(struct sge_parser *parser, const unsigned char *name,
-                                            size_t name_len) {
+static struct sge_block *_parse_one_message(struct sge_parser *parser) {
     int block_id = 0;
     int nf = 0;
+    size_t name_len = 0;
+    const unsigned char *name = NULL;
     struct sge_field *fields = NULL;
     struct sge_block *block = NULL;
     struct sge_proto *p = parser->proto;
+
+    name_len = _parse_block_name(parser, &name);
+    if (HAS_ERROR(&p->err)) {
+        return NULL;
+    }
 
     if (sge_find_radix(p->block_tree, (unsigned char *)name, name_len)) {
         SGE_PROTO_ERROR_ARG(p, SGE_ERR_PARSER_ERROR, "block(%.*s) already exists at %s:%lu",
@@ -814,31 +820,35 @@ static struct sge_service *_parse_one_service(struct sge_parser *parser) {
 
 static int _parse_one_block(struct sge_parser *parser, struct sge_block **blockp,
                             struct sge_service **servicep) {
-    size_t name_len = 0;
-    const unsigned char *name = NULL;
+    size_t bt_len = 0;
+    const unsigned char *bt = NULL;
     struct sge_block *block = NULL;
     struct sge_service *service = NULL;
     struct sge_proto *p = parser->proto;
 
-    name_len = _parse_block_name(parser, &name);
+    bt_len = _parse_block_name(parser, &bt);
     if (HAS_ERROR(&p->err)) {
         return SGE_ERROR;
     }
 
-    if (strncmp(name, SGE_SERVICE_KEYWORD, name_len) == 0) {
+    if (strncmp(bt, SGE_SERVICE_KEYWORD, bt_len) == 0) {
         service = _parse_one_service(parser);
         if (NULL == service) {
             return SGE_ERROR;
         }
         *servicep = service;
         return BLOCK_TYPE_SERVICE;
-    } else {
-        block = _parse_one_message(parser, name, name_len);
+    } else if (strncmp(bt, SGE_MESSAGE_KEYWORD, bt_len) == 0) {
+        block = _parse_one_message(parser);
         if (NULL == block) {
             return SGE_ERROR;
         }
         *blockp = block;
         return BLOCK_TYPE_MESSAGE;
+    } else {
+        SGE_PROTO_ERROR_ARG(parser->proto, SGE_ERR_PARSER_ERROR, "unknown block type(%.*s) at %s:%lu",
+                            bt_len, bt, parser->file, parser->lineno);
+        return SGE_ERROR;
     }
 }
 

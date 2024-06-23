@@ -10,14 +10,16 @@ MESSAGE(STATUS "Build Type ${CMAKE_BUILD_TYPE}")
 
 SET(CMAKE_C_FLAGS ${CMAKE_C_FLAGS} "-fPIC -fvisibility=hidden")
 
+INCLUDE_DIRECTORIES(../utils/src)
+
 SET(SRC
+    ../utils/src/array.c
+    ../utils/src/rax.c
     compressor.c
     decoder.c
-    rax.c
     encoder.c
     parser.c
     protocol.c
-    array.c
     result.c
 )
 

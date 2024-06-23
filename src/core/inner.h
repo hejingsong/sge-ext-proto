@@ -1,76 +1,18 @@
 #ifndef SGE_PROTOCOL_INNER_H_
 #define SGE_PROTOCOL_INNER_H_
 
+#include "array.h"
+#include "list.h"
 #include "protocol.h"
 #include "rax.h"
-
-#define sge_malloc malloc
-#define sge_realloc realloc
-#define sge_free(p) free((void *)(p))
+#include "sge.h"
 
 // version
 #define SGE_PROTO_MAJOR_VERSION 1
 #define SGE_PROTO_MINOR_VERSION 1
 #define SGE_PROTO_VERSION ((SGE_PROTO_MAJOR_VERSION << 4) | SGE_PROTO_MINOR_VERSION)
 
-struct list {
-    struct list *next;
-    struct list *prev;
-};
-
-#define sge_list_init(l) (l)->next = (l)->prev = (l)
-#define sge_list_add(l, n)     \
-    {                          \
-        (n)->next = (l);       \
-        (n)->prev = (l)->prev; \
-        (l)->prev->next = (n); \
-        (l)->prev = (n);       \
-    }
-#define sge_list_remove(node)              \
-    {                                      \
-        (node)->prev->next = (node)->next; \
-        (node)->next->prev = (node)->prev; \
-    }
-#define sge_list_empty(l) (l)->next == (l)
-#define sge_container_of(ptr, type, member) \
-    (type *)((void *)(ptr) - (void *)(&(((type *)0)->member)))
-#define sge_list_foreach(iter, list) \
-    for ((iter) = (list)->next; (iter) != (list); (iter) = (iter)->next)
-#define sge_list_foreach_safe(iter, next, list)                          \
-    for ((iter) = (list)->next, (next) = (iter)->next; (iter) != (list); \
-         (iter) = (next), (next) = (next)->next)
-
 #define base_filename(f) strrchr((f), '/')
-
-// radix tree
-typedef struct rax sge_radix;
-#define sge_create_radix raxNew
-#define sge_radix_size(r) raxSize((r))
-#define sge_insert_radix(r, s, l, d) raxInsert((r), (s), (l), (d), NULL)
-#define sge_remove_radix(r, s, l) raxRemove((r), (s), (l), NULL)
-#define sge_find_radix(r, s, l) raxFind((r), (s), (l))
-#define sge_destroy_radix(r) raxFree((r))
-
-// radix iter
-typedef struct raxIterator sge_radix_iter;
-#define sge_init_radix_iter(r, i)   \
-    {                               \
-        raxStart((i), (r));         \
-        raxSeek((i), "^", NULL, 0); \
-    }
-#define sge_next_radix_iter(i) raxNext((i))
-#define sge_destroy_radix_iter(i) raxStop((i))
-#define sge_radix_size(r) raxSize((r))
-
-// array
-typedef int (*fn_array_key)(void *);
-struct sge_array;
-struct sge_array *sge_create_array(size_t size, fn_array_key fn_key);
-int sge_insert_array(struct sge_array *arr, void *data);
-int sge_sort_array(struct sge_array *arr);
-int sge_find_array(struct sge_array *arr, int key, void **data);
-int sge_destroy_array(struct sge_array *arr);
-void sge_print_array(struct sge_array *arr);
 
 // protocol error
 #define HAS_ERROR(p) ((p)->code != 0)
